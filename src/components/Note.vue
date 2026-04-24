@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import {ref} from "vue";
+import { isDigitType, isDigit, findFirstNotOfFrom } from "../utils/DOMTypeDetermineUtils.ts";
 
 type commonBlockType =
 	"heading"
 	| "paragraph"
 	| "table"
-	| "list"
+	| "orderedList"
+	| "unorderedList"
+	| "item"
 	| "doc"
 	| "bold"
 	| "link"
 	| "italic"
 	| "text"
-	| "temp";
+	| "temp"
+	| "";
 let globalId = 1;
 
 interface commonBlock {
@@ -31,57 +35,141 @@ function markdownToDomTree(markdown: string): commonBlock {
 		children: [],
 	};
 
-	let state: object = {
-		buffer: "",
-		stack: [],
-		currentIndex: 0,
-	}
+	let textBeginIndex = 0
+	let textEndIndex = 0
 
-	let splitResult: string[] = markdown.split("\n");
+	while (textBeginIndex < markdown.length) {
+		let currentSymbol = markdown[textEndIndex]
+		let maybeType: commonBlockType = "";
+		let certainType: commonBlockType = "";
 
-	for (let str of splitResult) {
-		if (str === "") continue;
+		// 类型判断
+		if (currentSymbol == "\n" && markdown[textEndIndex + 1] != "\n") {
+			textBeginIndex++
+			textEndIndex++
+			continue;
+		}
+		else if (currentSymbol == "#") {
+			maybeType = "heading"
+		}
+		else if (currentSymbol == "*") {
+			maybeType = "unorderedList"
+		}
+		else if (isDigitType(currentSymbol)) {
+			maybeType = "orderedList"
+		}
+		else {
+			certainType = "paragraph"
+		}
 
-		// 标题判断
-		let isHeading: boolean = true;
 		let headingLevel: number = 0;
-		if (str.startsWith("#")) {
-			let i: number;
-			for (i = 1; i < str.length && i < 6; i++) {
-				if (str.charAt(i) == "#") {
-					headingLevel = i;
-				} else if (str.charAt(i) == " ") {
+		while (!certainType && textEndIndex < markdown.length) {
+			textEndIndex ++;
+			currentSymbol = markdown[textEndIndex];
+
+			// 标题判断
+			if (maybeType === "heading") {
+				if (currentSymbol == " ") {
+					textBeginIndex += 2
+					certainType = "heading"
 					break;
-				} else {
-					// 不是标题
-					isHeading = false;
+				}
+				else if (currentSymbol == "#") {
+					textBeginIndex++
+					headingLevel++;
+				}
+				else {
+					textBeginIndex = 0
+					certainType = "paragraph"
 					break;
 				}
 			}
-		} else {
-			isHeading = false;
+			// 无序列表
+			else if (maybeType === "unorderedList") {
+				if (currentSymbol == " ") {
+					textBeginIndex += 2
+					certainType = "unorderedList"
+				}
+				else {
+					certainType = "paragraph"
+				}
+				break;
+			}
+			// 有序列表
+			else if (maybeType === "orderedList") {
+				if (currentSymbol == " ") {
+					certainType = "orderedList"
+					break;
+				}
+				else if (isDigitType(currentSymbol)) {}
+				else {
+					certainType = "paragraph"
+					break;
+				}
+			}
 		}
 
-		// 创建标题块
-		if (isHeading) {
+		// 创建块
+		// 获取文本
+		if (certainType == "paragraph" && markdown[textBeginIndex] == "\n") {
+			textEndIndex = findFirstNotOfFrom(markdown, "\n", textBeginIndex);
+		}
+		else if (certainType == "unorderedList") {
+			textEndIndex = markdown.indexOf('\n\n', textBeginIndex);
+		}
+		else {
+			textEndIndex = markdown.indexOf('\n', textBeginIndex);
+		}
+		if (textEndIndex == -1) textEndIndex = markdown.length
+		if (certainType == "heading") {
 			rootBlock.children?.push({
 				id: newBlockId(),
-				type: "heading",
+				type: certainType,
 				level: headingLevel,
-				children: recognizeText(str.substring(headingLevel + 2, str.length)!)
+				children: recognizeText(markdown.slice(textBeginIndex,textEndIndex))
 			})
 		}
-		// 创建段落块
+		else if (certainType == "unorderedList") {
+			let childs = markdown.slice(textBeginIndex,textEndIndex).split("\n* ")
+			console.log(childs)
+			rootBlock.children?.push({
+				id: newBlockId(),
+				type: certainType,
+				children: childs.map((value) => {
+					return {
+						children: recognizeText(value),
+						type: "item"
+					}
+				})
+			})
+		}
 		else {
 			rootBlock.children?.push({
 				id: newBlockId(),
-				type: "paragraph",
-				children: recognizeText(str)
+				type: certainType,
+				children: recognizeText(markdown.slice(textBeginIndex,textEndIndex))
 			})
 		}
+		if (textBeginIndex == textEndIndex) {
+			textBeginIndex++
+			textEndIndex++
+		}
+		else {
+			textBeginIndex = textEndIndex;
+		}
 	}
+
 	return rootBlock
 }
+
+function createBlock(str: string) {
+
+}
+
+function determineType() {
+
+}
+
 
 interface textType {
 	id: commonBlockType
@@ -183,9 +271,9 @@ const markdown = `
 
 ## 二级标题
 
-- 列表项一
-- 列表项二，包含 **加粗**
-- 列表项三，包含 *斜体* 和普通文本
+* 列表项一
+* 列表项二，包含 **加粗**
+* 列表项三，包含 *斜体* 和普通文本
 
 ** 1 { a } 2 **
 
@@ -200,12 +288,30 @@ function renderDomTree(node: commonBlock) {
 				renderDomTree(child);
 			}
 			domOutput.value += `</span>`
-		} else {
+		}
+		else if (node.type == "orderedList") {
+
+		}
+		else if (node.type == "unorderedList") {
+			domOutput.value += `<ul class="">`
+			for (let child of node.children) {
+				domOutput.value += `<li>`
+				renderDomTree(child);
+				domOutput.value += `</li>`
+			}
+			domOutput.value += `</ul>`
+		}
+		else if (node.type == "heading") {
 			domOutput.value += `<div class="${node.type} ${node.level != undefined ? "h" + (node.level + 1) : ""}">`
 			for (let child of node.children) {
 				renderDomTree(child);
 			}
 			domOutput.value += `</div>`
+		}
+		else {
+			for (let child of node.children) {
+				renderDomTree(child);
+			}
 		}
 	} else {
 		domOutput.value += `${node.text}`
@@ -228,7 +334,7 @@ function printDomTree(node: commonBlock, level = 0) {
 function main() {
 	let domTree = markdownToDomTree(markdown)
 	console.log(domTree)
-	printDomTree(domTree)
+	// printDomTree(domTree)
 	renderDomTree(domTree)
 }
 
@@ -242,10 +348,9 @@ main()
 
 <style>
 #note-wrapper {
-	display: flex;
-	flex: 1;
 	background-color: #fefaf0;
 	border-radius: 5px;
+	flex: 1;
 	color: black;
 	padding: 50px;
 	cursor: text;
